@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:insetLeft="36dp"
+        android:insetTop="36dp"
+        android:insetRight="36dp"
+        android:insetBottom="36dp">
+        <bitmap
+            android:gravity="center"
+            android:src="@drawable/splash" />
+    </item>
+</layer-list>

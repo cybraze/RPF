@@ -1,0 +1,67 @@
+name: rpf_flutter
+description: RPF Duty Management App
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  flutter_svg: ^2.0.9
+  geolocator: ^11.0.0
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+
+  provider: ^6.1.2
+  # Splash Screen
+  flutter_native_splash: ^2.4.4
+
+  # (Future use - already add kar raha hu)
+  http: ^1.2.1
+  shared_preferences: ^2.2.3
+  image_picker: ^1.1.2
+  image_cropper: ^8.1.0
+  battery_plus: ^6.0.3
+  flutter_foreground_task: ^8.0.0
+  pusher_client_socket: ^0.0.3+1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^5.0.0
+
+  # App icon generator
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/app_icon.svg
+    - assets/app_icon.png
+    - assets/app_logo.png
+
+# ✅ Splash Screen Config
+flutter_native_splash:
+  color: "#0F172A"
+  image: assets/app_logo.png
+  android: true
+  ios: true
+
+# ✅ App Icon Config
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/app_logo.png"
+
+dependency_overrides:
+  image_cropper_platform_interface: 7.1.0
+
+
