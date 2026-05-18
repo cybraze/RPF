@@ -110,8 +110,56 @@ Future<bool> ensureTrackingPermissionReady(
   bool mandatory = false,
 }) async {
   var permission = await Geolocator.checkPermission();
-  if (permission == LocationPermission.denied) {
+  if (!Platform.isAndroid && permission == LocationPermission.denied) {
     permission = await Geolocator.requestPermission();
+  }
+
+  if (Platform.isAndroid) {
+    if (permission == LocationPermission.always) {
+      return true;
+    }
+
+    if (!forceBackgroundAccess &&
+        permission != LocationPermission.denied &&
+        permission != LocationPermission.deniedForever) {
+      return true;
+    }
+
+    final promptKey = forceBackgroundAccess
+        ? _backgroundLocationPromptKey
+        : _locationPromptKey;
+    if (!context.mounted ||
+        (!mandatory &&
+            await Storage.wasPermissionPromptShownRecently(promptKey))) {
+      return false;
+    }
+
+    await Storage.markPermissionPromptShown(promptKey);
+    final openSettings = await _showTrackingDialog(
+      context,
+      title: forceBackgroundAccess
+          ? 'Enable Background Location'
+          : 'Location Permission Required',
+      message: forceBackgroundAccess
+          ? 'Mounted duty tracking must continue when the app is in the background. Open app permissions and select "Allow all the time" for Location.'
+          : 'Mounted duty tracking requires location access. Open app permissions and allow Location for this app.',
+      primaryLabel: 'Open app permissions',
+      secondaryLabel: mandatory ? 'Required' : 'Not now',
+      mandatory: mandatory,
+    );
+    if (openSettings == true) {
+      final opened = await DeviceSettingsService.openAppDetailsSettings();
+      if (!opened) {
+        await Geolocator.openAppSettings();
+      }
+      await Future.delayed(const Duration(milliseconds: 800));
+      permission = await Geolocator.checkPermission();
+    }
+
+    return forceBackgroundAccess
+        ? permission == LocationPermission.always
+        : permission != LocationPermission.denied &&
+            permission != LocationPermission.deniedForever;
   }
 
   if (permission == LocationPermission.denied ||

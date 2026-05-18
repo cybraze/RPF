@@ -9,6 +9,8 @@ import '../utils/background_tracking_prep.dart';
 import 'dashboard_screen.dart';
 
 class TrackingSetupScreen extends StatefulWidget {
+  static bool isVisible = false;
+
   final Future<void> Function()? onSetupComplete;
   final bool returnResult;
 
@@ -32,6 +34,7 @@ class _TrackingSetupScreenState extends State<TrackingSetupScreen>
   @override
   void initState() {
     super.initState();
+    TrackingSetupScreen.isVisible = true;
     WidgetsBinding.instance.addObserver(this);
     unawaited(_refreshStatus(autoContinue: true));
   }
@@ -39,6 +42,7 @@ class _TrackingSetupScreenState extends State<TrackingSetupScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    TrackingSetupScreen.isVisible = false;
     super.dispose();
   }
 
@@ -109,10 +113,7 @@ class _TrackingSetupScreenState extends State<TrackingSetupScreen>
   }
 
   Future<void> _handleLocationPermission() async {
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
+    final permission = await Geolocator.checkPermission();
     if (permission != LocationPermission.always) {
       final opened = await DeviceSettingsService.openAppDetailsSettings();
       if (!opened) {

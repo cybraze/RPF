@@ -8,6 +8,7 @@ import 'services/network_status_service.dart';
 import 'services/tracking_service.dart';
 import 'screens/splash_screen.dart';
 import 'utils/session_manager.dart';
+import 'utils/permission_redirect_guard.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -62,8 +63,32 @@ void main() async {
   );
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      PermissionRedirectGuard.enforceRequiredPermissions();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
