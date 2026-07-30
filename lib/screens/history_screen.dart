@@ -515,7 +515,8 @@ class _LogTimeline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final logMap = log is Map ? log.cast<String, dynamic>() : const <String, dynamic>{};
+    final logMap =
+        log is Map ? log.cast<String, dynamic>() : const <String, dynamic>{};
     final steps = [
       _TimelineStep('Login', _readTime(logMap['login_time'])),
       _TimelineStep('Start', _readTime(logMap['duty_start_time'])),
@@ -564,8 +565,8 @@ class _LogTimeline extends StatelessWidget {
   }
 
   static String _readTime(dynamic raw) {
-    final value = raw?.toString();
-    if (value == null || value.trim().isEmpty) {
+    final value = raw?.toString().trim();
+    if (value == null || value.isEmpty) {
       return '-';
     }
 
@@ -574,9 +575,23 @@ class _LogTimeline extends StatelessWidget {
       return value;
     }
 
-    final hour = parsed.hour.toString().padLeft(2, '0');
-    final minute = parsed.minute.toString().padLeft(2, '0');
-    return '$hour:$minute';
+    final hasTimezone = RegExp(r'(Z|[+-]\d{2}:?\d{2})$').hasMatch(value);
+    final local = hasTimezone
+        ? parsed.toLocal()
+        : DateTime.utc(
+            parsed.year,
+            parsed.month,
+            parsed.day,
+            parsed.hour,
+            parsed.minute,
+            parsed.second,
+            parsed.millisecond,
+            parsed.microsecond,
+          ).toLocal();
+
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return hour + ':' + minute;
   }
 }
 
@@ -647,21 +662,25 @@ class _HistoryStage {
         );
       case 3:
         return _HistoryStage(
-          label: statusLabel?.isNotEmpty == true ? statusLabel! : 'Logout Pending',
+          label:
+              statusLabel?.isNotEmpty == true ? statusLabel! : 'Logout Pending',
           endedStage: endedStage,
           reportLine: 'Duty ended — logout pending.',
           color: Colors.deepPurple,
         );
       case 2:
         return _HistoryStage(
-          label: statusLabel?.isNotEmpty == true ? statusLabel! : 'Dismount Pending',
+          label: statusLabel?.isNotEmpty == true
+              ? statusLabel!
+              : 'Dismount Pending',
           endedStage: endedStage,
           reportLine: 'Duty active — dismount pending.',
           color: Colors.blue,
         );
       case 1:
         return _HistoryStage(
-          label: statusLabel?.isNotEmpty == true ? statusLabel! : 'Mount Pending',
+          label:
+              statusLabel?.isNotEmpty == true ? statusLabel! : 'Mount Pending',
           endedStage: endedStage,
           reportLine: 'Logged in — mount pending.',
           color: Colors.orange,

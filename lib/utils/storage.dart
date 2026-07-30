@@ -1,6 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/active_duty_geofence.dart';
+import '../models/beat_sector_models.dart';
 import '../models/user_profile.dart';
 
 class Storage {
@@ -12,6 +13,7 @@ class Storage {
   static const _userIdKey = 'user_id';
   static const _userProfileKey = 'user_profile';
   static const _permissionPromptPrefix = 'permission_prompt_';
+  static const _beatMappingDraftPrefix = 'beat_mapping_draft_';
 
   static Future<void> saveToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
@@ -33,8 +35,6 @@ class Storage {
     await prefs.remove(_trackingQueueKey);
     await prefs.remove(_activeDutyGeofenceKey);
   }
-
-  // ── Active Duty Log ID (for tracking resume on app restart) ───────────────
 
   static Future<void> saveActiveDutyLogId(
     int dutyLogId, {
@@ -79,6 +79,29 @@ class Storage {
   static Future<void> clearActiveDutyGeofence() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_activeDutyGeofenceKey);
+  }
+
+  static Future<void> saveBeatMappingDraft(
+    int beatId,
+    MappingDraft draft,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      '$_beatMappingDraftPrefix$beatId',
+      draft.toJsonString(),
+    );
+  }
+
+  static Future<MappingDraft> getBeatMappingDraft(int beatId) async {
+    final prefs = await SharedPreferences.getInstance();
+    return MappingDraft.fromJsonString(
+      prefs.getString('$_beatMappingDraftPrefix$beatId'),
+    );
+  }
+
+  static Future<void> clearBeatMappingDraft(int beatId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_beatMappingDraftPrefix$beatId');
   }
 
   static Future<void> saveTrackingQueue(String queueJson) async {

@@ -4,6 +4,7 @@ import '../config/app_config.dart';
 import '../models/inspection_task.dart';
 import '../models/tracking_point.dart';
 import '../models/user_profile.dart';
+import '../models/beat_sector_models.dart';
 import 'device_settings_service.dart';
 
 class SessionExpiredException implements Exception {
@@ -20,12 +21,12 @@ class SessionExpiredException implements Exception {
 class ApiService {
   static const String baseUrl = AppConfig.apiBaseUrl;
 
-  /// Safe JSON decode â€" HTML ya garbage aaye toh clear error milega
+  /// Safe JSON decode — returns a clear error if the response is HTML or invalid
   static Map<String, dynamic> _decodeJson(http.Response response) {
     final body = response.body.trim();
     if (body.isEmpty) {
       throw Exception(
-          "Server ne khaali response diya (status: ${response.statusCode})");
+          "Server returned an empty response (status: ${response.statusCode})");
     }
     if (!body.startsWith('{') && !body.startsWith('[')) {
       throw Exception("Server error (status: ${response.statusCode})");
@@ -34,7 +35,7 @@ class ApiService {
       return jsonDecode(body) as Map<String, dynamic>;
     } catch (_) {
       throw Exception(
-          "Response parse nahi hua (status: ${response.statusCode})");
+          "Failed to parse server response (status: ${response.statusCode})");
     }
   }
 
@@ -368,7 +369,8 @@ class ApiService {
     throw Exception(data['message'] ?? "Failed to send location");
   }
 
-  static Future<String> updateProfilePhoto(String token, String photoPath) async {
+  static Future<String> updateProfilePhoto(
+      String token, String photoPath) async {
     final uri = Uri.parse('$baseUrl/profile/photo');
     final request = http.MultipartRequest('POST', uri);
     request.headers['Authorization'] = 'Bearer $token';
@@ -426,7 +428,8 @@ class ApiService {
     throw Exception(data['message'] ?? "Failed to load profile");
   }
 
-  static Future<Map<String, dynamic>> getOtherConfiguration(String token) async {
+  static Future<Map<String, dynamic>> getOtherConfiguration(
+      String token) async {
     final response = await http.get(
       AppConfig.apiUri("fayyum-api/other-configuration"),
       headers: {
@@ -509,8 +512,8 @@ class ApiService {
   //   POST /duty/dismount
   //   POST /duty/logout
   //
-  // Sabmein body mein deployment_id + latitude + longitude required hai
-  // (server ka validateGpsPayload sabmein call hota hai)
+  // All endpoints require deployment_id + latitude + longitude in the body
+  // (server's validateGpsPayload runs on all of them)
   // â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
   static Future<void> loginDuty(
@@ -726,5 +729,410 @@ class ApiService {
       } catch (_) {}
       throw Exception(msg);
     }
+  }
+
+  static Map<String, dynamic> _decodeMultipartBody(
+    int statusCode,
+    String body,
+  ) {
+    final bodyTrim = body.trim();
+    if (bodyTrim.isEmpty) {
+      return <String, dynamic>{};
+    }
+    if (!bodyTrim.startsWith('{')) {
+      throw Exception('Server error ($statusCode)');
+    }
+    return jsonDecode(bodyTrim) as Map<String, dynamic>;
+  }
+
+  static List<Map<String, dynamic>> _extractBeatList(dynamic payload) {
+    if (payload is List) {
+      return payload
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList();
+    }
+    if (payload is Map) {
+      final data = payload.cast<String, dynamic>();
+      for (final key in const [
+        'items',
+        'data',
+        'inspections',
+        'records',
+        'results',
+        'rows',
+        'history',
+      ]) {
+        final extracted = _extractBeatList(data[key]);
+        if (extracted.isNotEmpty) {
+          return extracted;
+        }
+      }
+    }
+    return const [];
+  }
+
+  static Never _throwBeatApiError(
+    int statusCode,
+    Map<String, dynamic> data,
+    String fallback,
+  ) {
+    if (statusCode == 401) {
+      throw const SessionExpiredException();
+    }
+    final errors = data['errors'];
+    if (errors is Map && errors.isNotEmpty) {
+      final first = errors.values.first;
+      if (first is List && first.isNotEmpty) {
+        throw Exception(first.first.toString());
+      }
+    }
+    throw Exception(data['message'] ?? fallback);
+  }
+
+  static Future<AppBootstrap> getAppBootstrap(String token) async {
+    final response = await http.get(
+      AppConfig.apiUri('app/bootstrap'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) {
+      return AppBootstrap.fromJson(data);
+    }
+    _throwBeatApiError(response.statusCode, data, 'Failed to load app access');
+  }
+
+  static Future<BeatSectorHomeData> getBeatSectorHome(String token) async {
+    final response = await http.get(
+      AppConfig.apiUri('beat-sector/home'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) {
+      return BeatSectorHomeData.fromJson(data);
+    }
+    _throwBeatApiError(response.statusCode, data, 'Failed to load Beat Sector');
+  }
+
+  static Future<BeatPage> getSectorBeats(
+    String token, {
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    final response = await http.get(
+      AppConfig.apiUri('beat-sector/beats').replace(queryParameters: {
+        'page': page.toString(),
+        'per_page': perPage.toString(),
+      }),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) {
+      return BeatPage.fromJson(data);
+    }
+    _throwBeatApiError(response.statusCode, data, 'Failed to load beats');
+  }
+
+  static Future<SectorBeat> getSectorBeatDetail(
+      String token, int beatId) async {
+    final response = await http.get(
+      AppConfig.apiUri('beat-sector/beats/$beatId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) {
+      final payload = data['data'];
+      final beat = payload is Map && payload['beat'] is Map
+          ? (payload['beat'] as Map).cast<String, dynamic>()
+          : (payload as Map).cast<String, dynamic>();
+      return SectorBeat.fromJson(beat);
+    }
+    _throwBeatApiError(response.statusCode, data, 'Failed to load beat detail');
+  }
+
+  static Future<BeatMapping> getBeatMapping(String token, int beatId) async {
+    final response = await http.get(
+      AppConfig.apiUri('beat-sector/beats/$beatId/mapping'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) {
+      return BeatMapping.fromJson(data);
+    }
+    _throwBeatApiError(response.statusCode, data, 'Failed to load mapping');
+  }
+
+  static Future<void> saveBeatMapping({
+    required String token,
+    required int beatId,
+    required int bufferMeter,
+    required List<BeatPoint> points,
+  }) async {
+    final response = await http.put(
+      AppConfig.apiUri('beat-sector/beats/$beatId/mapping'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'buffer_meter': bufferMeter,
+        'points': points.map((point) => point.toJson()).toList(),
+      }),
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return;
+    }
+    _throwBeatApiError(response.statusCode, data, 'Failed to save mapping');
+  }
+
+  static Future<BeatLookups> getBeatLookups(String token) async {
+    final response = await http.get(
+      AppConfig.apiUri('beat-sector/lookups'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) {
+      return BeatLookups.fromJson(data);
+    }
+    _throwBeatApiError(response.statusCode, data, 'Failed to load lookups');
+  }
+
+  static Future<List<Map<String, dynamic>>> getBeatMasters(
+    String token,
+    int beatId,
+    String type,
+  ) async {
+    final response = await http.get(
+      AppConfig.apiUri('beat-sector/beats/$beatId/masters/$type'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) {
+      return _extractBeatList(data['data'] ?? data);
+    }
+    _throwBeatApiError(response.statusCode, data, 'Failed to load master data');
+  }
+
+  static Future<void> createBeatMaster(
+    String token,
+    int beatId,
+    String type,
+    Map<String, dynamic> body,
+  ) async {
+    final response = await http.post(
+      AppConfig.apiUri('beat-sector/beats/$beatId/masters/$type'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        ...body,
+        'beat_id': beatId,
+        'sector_beat_id': beatId,
+      }),
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200 || response.statusCode == 201) return;
+    _throwBeatApiError(response.statusCode, data, 'Failed to save master data');
+  }
+
+  static Future<void> updateBeatMaster(
+    String token,
+    int beatId,
+    String type,
+    int itemId,
+    Map<String, dynamic> body,
+  ) async {
+    final response = await http.patch(
+      AppConfig.apiUri('beat-sector/beats/$beatId/masters/$type/$itemId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        ...body,
+        'beat_id': beatId,
+        'sector_beat_id': beatId,
+      }),
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) return;
+    _throwBeatApiError(
+        response.statusCode, data, 'Failed to update master data');
+  }
+
+  static Future<void> deleteBeatMaster(
+    String token,
+    int beatId,
+    String type,
+    int itemId,
+  ) async {
+    final response = await http.delete(
+      AppConfig.apiUri('beat-sector/beats/$beatId/masters/$type/$itemId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200 || response.statusCode == 204) return;
+    _throwBeatApiError(
+        response.statusCode, data, 'Failed to delete master data');
+  }
+
+  static Future<Map<String, dynamic>> startBeatInspection(
+    String token,
+    int beatId,
+  ) async {
+    final response = await http.post(
+      AppConfig.apiUri('beat-sector/inspections'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({'sector_beat_id': beatId}),
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return (data['data'] as Map?)?.cast<String, dynamic>() ?? const {};
+    }
+    _throwBeatApiError(response.statusCode, data, 'Failed to start inspection');
+  }
+
+  static Future<Map<String, dynamic>> getBeatInspection(
+    String token,
+    int inspectionId,
+  ) async {
+    final response = await http.get(
+      AppConfig.apiUri('beat-sector/inspections/$inspectionId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) {
+      return (data['data'] as Map?)?.cast<String, dynamic>() ?? const {};
+    }
+    _throwBeatApiError(response.statusCode, data, 'Failed to load inspection');
+  }
+
+  static Future<List<Map<String, dynamic>>> getBeatInspections(
+    String token, {
+    String status = '',
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    final query = <String, String>{
+      if (status.trim().isNotEmpty) 'status': status,
+      'page': page.toString(),
+      'per_page': perPage.toString(),
+    };
+    final response = await http.get(
+      AppConfig.apiUri('beat-sector/inspections')
+          .replace(queryParameters: query),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) {
+      return _extractBeatList(data['data'] ?? data);
+    }
+    _throwBeatApiError(response.statusCode, data, 'Failed to load inspections');
+  }
+
+  static Future<void> addBeatInspectionItem({
+    required String token,
+    required int inspectionId,
+    required int categoryId,
+    required String remark,
+    required double latitude,
+    required double longitude,
+    double? locationAccuracy,
+    DateTime? capturedAt,
+    String? attachmentPath,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      AppConfig.apiUri('beat-sector/inspections/$inspectionId/items'),
+    );
+    request.headers['Authorization'] = 'Bearer $token';
+    request.headers['Accept'] = 'application/json';
+    request.fields['category_id'] = categoryId.toString();
+    request.fields['remark'] = remark;
+    request.fields['latitude'] = latitude.toString();
+    request.fields['longitude'] = longitude.toString();
+    if (locationAccuracy != null) {
+      request.fields['location_accuracy'] = locationAccuracy.toString();
+    }
+    if (capturedAt != null) {
+      request.fields['captured_at'] = capturedAt.toUtc().toIso8601String();
+    }
+    if (attachmentPath != null && attachmentPath.isNotEmpty) {
+      request.files.add(
+        await http.MultipartFile.fromPath('attachment', attachmentPath),
+      );
+    }
+    final streamed = await request.send();
+    final body = await streamed.stream.bytesToString();
+    final data = _decodeMultipartBody(streamed.statusCode, body);
+    if (streamed.statusCode == 200 || streamed.statusCode == 201) return;
+    _throwBeatApiError(streamed.statusCode, data, 'Failed to add observation');
+  }
+
+  static Future<void> finishBeatInspection(
+    String token,
+    int inspectionId,
+  ) async {
+    final response = await http.post(
+      AppConfig.apiUri('beat-sector/inspections/$inspectionId/finish'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200 || response.statusCode == 201) return;
+    _throwBeatApiError(
+        response.statusCode, data, 'Failed to finish inspection');
   }
 }

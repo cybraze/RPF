@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/user_profile.dart';
+import '../models/beat_sector_models.dart';
 import '../services/api_service.dart';
 import '../services/network_status_service.dart';
 import '../services/duty_resume_service.dart';
@@ -12,6 +13,7 @@ import '../utils/session_manager.dart';
 import '../utils/storage.dart';
 import '../utils/theme_provider.dart';
 import '../widgets/app_logo.dart';
+import 'beat_sector_screen.dart';
 import 'history_screen.dart';
 import 'inspection_tasks_screen.dart';
 import 'profile_screen.dart';
@@ -120,6 +122,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         stats: const _DashboardStats.empty(),
         canViewInspectionTasks: _canViewInspectionTasks(cachedProfile),
         inspectionPendingCount: 0,
+        canViewBeatSector: false,
+        beatSectorHome: null,
       );
     }
 
@@ -162,6 +166,18 @@ class _DashboardScreenState extends State<DashboardScreen>
     } catch (_) {}
 
     var inspectionPendingCount = 0;
+    var canViewBeatSector = false;
+    BeatSectorHomeData? beatSectorHome;
+    try {
+      final bootstrap = await ApiService.getAppBootstrap(token);
+      canViewBeatSector = bootstrap.canViewBeatSector;
+      if (canViewBeatSector) {
+        beatSectorHome = await ApiService.getBeatSectorHome(token);
+      }
+    } catch (_) {
+      canViewBeatSector = false;
+    }
+
     if (canViewInspectionTasks) {
       try {
         final taskPage = await ApiService.getInspectionTasks(
@@ -186,6 +202,8 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
       canViewInspectionTasks: canViewInspectionTasks,
       inspectionPendingCount: inspectionPendingCount,
+      canViewBeatSector: canViewBeatSector,
+      beatSectorHome: beatSectorHome,
     );
   }
 
@@ -242,6 +260,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                 stats: const _DashboardStats.empty(),
                 canViewInspectionTasks: false,
                 inspectionPendingCount: 0,
+                canViewBeatSector: false,
+                beatSectorHome: null,
               );
 
           return Column(
@@ -325,6 +345,25 @@ class _DashboardScreenState extends State<DashboardScreen>
                             ),
                           ),
                           const SizedBox(height: 12),
+                          if (data.canViewBeatSector) ...[
+                            GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => BeatSectorHomeScreen(
+                                      initialHome: data.beatSectorHome,
+                                    ),
+                                  ),
+                                ).then((_) => _refreshDashboard());
+                              },
+                              child: mainCard(
+                                title: 'Beat Sector',
+                                icon: Icons.route_rounded,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -550,7 +589,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget mainCard({
     required String title,
-    required String subtitle,
+    String subtitle = '',
     required IconData icon,
     String? badgeText,
   }) {
@@ -777,12 +816,16 @@ class _DashboardViewData {
   final _DashboardStats stats;
   final bool canViewInspectionTasks;
   final int inspectionPendingCount;
+  final bool canViewBeatSector;
+  final BeatSectorHomeData? beatSectorHome;
 
   const _DashboardViewData({
     required this.profile,
     required this.stats,
     required this.canViewInspectionTasks,
     required this.inspectionPendingCount,
+    required this.canViewBeatSector,
+    required this.beatSectorHome,
   });
 }
 

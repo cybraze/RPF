@@ -65,6 +65,6 @@ class LocationSampler {
       return best;
     }
 
-    throw lastError ?? Exception('Location sample nahi mil paaya.');
+    throw lastError ?? Exception('Unable to obtain location. Please try again.');
   }
 }

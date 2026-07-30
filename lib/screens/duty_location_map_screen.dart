@@ -48,7 +48,7 @@ class _DutyLocationMapScreenState extends State<DutyLocationMapScreen>
   bool _mapReady = false;
   // true when _userPoint is the stale value passed in from the previous screen
   bool _userPointIsStale = false;
-  String _statusText = 'Map open hote hi live location ready ki ja rahi hai.';
+  String _statusText = 'Initialising live location, please wait...';
 
   @override
   void initState() {
@@ -78,7 +78,7 @@ class _DutyLocationMapScreenState extends State<DutyLocationMapScreen>
     _lastAcceptedAccuracy = null;
     _userPointIsStale = fallbackPoint != null;
     if (fallbackPoint != null) {
-      _statusText = 'Approx location dikh rahi hai, live GPS aa rahi hai...';
+      _statusText = 'Showing approximate location, acquiring live GPS...';
     }
     unawaited(_startLiveLocation());
   }
@@ -141,7 +141,7 @@ class _DutyLocationMapScreenState extends State<DutyLocationMapScreen>
         _liveTrackingEnabled = false;
         _locationBlocked = true;
         _statusText =
-            'Location off hai. Live map use karne ke liye location on kariye.';
+            'Location is turned off. Please enable it to use the live map.';
       });
       return;
     }
@@ -157,7 +157,7 @@ class _DutyLocationMapScreenState extends State<DutyLocationMapScreen>
       setState(() {
         _liveTrackingEnabled = false;
         _locationBlocked = true;
-        _statusText = 'Location permission ke bina live map kaam nahi karega.';
+        _statusText = 'Location permission is required to use the live map.';
       });
       return;
     }
@@ -166,7 +166,7 @@ class _DutyLocationMapScreenState extends State<DutyLocationMapScreen>
     setState(() {
       _liveTrackingEnabled = true;
       _locationBlocked = false;
-      _statusText = 'GPS signal dhundha ja raha hai, ek baar aane do...';
+      _statusText = 'Searching for GPS signal...';
     });
 
     // No getCurrentPosition here — it has a short timeout and falls back to
@@ -185,7 +185,7 @@ class _DutyLocationMapScreenState extends State<DutyLocationMapScreen>
         if (!mounted) return;
         setState(() {
           _liveTrackingEnabled = false;
-          _statusText = 'GPS signal nahi mil rahi. Location on hai?';
+          _statusText = 'GPS signal lost. Is location enabled?';
         });
       },
     );
@@ -196,7 +196,7 @@ class _DutyLocationMapScreenState extends State<DutyLocationMapScreen>
       if (mounted) {
         setState(() {
           _statusText =
-              'GPS signal weak hai, last reliable location dikhai ja rahi hai.';
+              'Weak GPS signal. Showing last reliable location.';
         });
       }
       return;
@@ -233,7 +233,7 @@ class _DutyLocationMapScreenState extends State<DutyLocationMapScreen>
     final targetPoint = _targetPoint;
     setState(() {
       _statusText = targetPoint == null
-          ? 'Live location active hai.'
+          ? 'Live location active.'
           : '${_distanceLabel(nextPoint, targetPoint, _status)} - Live';
     });
 
@@ -825,7 +825,7 @@ class _DutyLocationMapScreenState extends State<DutyLocationMapScreen>
 
     final distance = const Distance().as(LengthUnit.Meter, user, target);
     final rounded = distance.round();
-    return status <= 0 ? 'Post se $rounded m' : 'Beat se $rounded m';
+    return status <= 0 ? 'Post: $rounded m away' : 'Beat: $rounded m away';
   }
 
   static double? _asDouble(dynamic value) {

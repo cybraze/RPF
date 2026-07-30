@@ -1,30 +1,82 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:rpf_flutter/main.dart';
+import 'package:rpf_flutter/models/beat_sector_models.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  test(
+      'bootstrap allows Beat Sector only when module and capability are present',
+      () {
+    final denied = AppBootstrap.fromJson({
+      'data': {
+        'allowed_modules': ['beat_sector'],
+        'module_capabilities': {
+          'beat_sector': {'can_view': false}
+        }
+      }
+    });
+    expect(denied.canViewBeatSector, isFalse);
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    final allowed = AppBootstrap.fromJson({
+      'data': {
+        'allowed_modules': ['beat_sector'],
+        'module_capabilities': {
+          'beat_sector': {'can_view': true}
+        }
+      }
+    });
+    expect(allowed.canViewBeatSector, isTrue);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  test('alternate beat does not expose master or mapping actions', () {
+    final beat = SectorBeat.fromJson({
+      'id': 7,
+      'name': 'BPL Yard',
+      'assignment_type': 'alternate',
+      'capabilities': {
+        'can_view': true,
+        'can_inspect': true,
+        'can_manage_master': false,
+        'can_map_polyline': false,
+      }
+    });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(beat.capabilities.canInspect, isTrue);
+    expect(beat.capabilities.canManageMaster, isFalse);
+    expect(beat.capabilities.canMapPolyline, isFalse);
+  });
+
+  test('home cards use backend visible flags', () {
+    final home = BeatSectorHomeData.fromJson({
+      'data': {
+        'cards': [
+          {'key': 'assigned', 'title': 'My Assigned Beats', 'visible': true},
+          {'key': 'master', 'title': 'Beat Master Data', 'visible': false},
+        ]
+      }
+    });
+
+    expect(home.cards.map((c) => c.key), ['assigned']);
+  });
+
+  test('mapping requires at least two different points', () {
+    expect(
+      hasMinimumDistinctMappingPoints([
+        const BeatPoint(latitude: 23.1, longitude: 79.1),
+      ]),
+      isFalse,
+    );
+    expect(
+      hasMinimumDistinctMappingPoints([
+        const BeatPoint(latitude: 23.1, longitude: 79.1),
+        const BeatPoint(latitude: 23.1, longitude: 79.1),
+      ]),
+      isFalse,
+    );
+    expect(
+      hasMinimumDistinctMappingPoints([
+        const BeatPoint(latitude: 23.1, longitude: 79.1),
+        const BeatPoint(latitude: 23.2, longitude: 79.1),
+      ]),
+      isTrue,
+    );
   });
 }

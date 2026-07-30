@@ -29,7 +29,7 @@ Future<bool> ensureLocationEnabledForMountedDuty(
           SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Phone location on kariye',
+              'Location is Disabled',
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             ),
           ),
@@ -37,20 +37,20 @@ Future<bool> ensureLocationEnabledForMountedDuty(
       ),
       content: Text(
         force
-            ? 'Duty mounted hai, isliye phone ka Location switch ON rehna chahiye. Agli screen me bas Location ON kar dijiye.'
-            : 'Tracking continue rakhne ke liye phone ka Location switch ON kariye.',
+            ? 'Location must remain enabled while duty is mounted. Please turn on Location to continue.'
+            : 'Please enable Location to continue tracking.',
         style: const TextStyle(fontSize: 14),
       ),
       actions: [
         if (!force)
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Baad me'),
+            child: const Text('Later'),
           ),
         ElevatedButton.icon(
           onPressed: () => Navigator.pop(ctx, true),
           icon: const Icon(Icons.settings_rounded, size: 16),
-          label: const Text('Location panel kholo'),
+          label: const Text('Open Location Settings'),
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF3B5BDB),
             foregroundColor: Colors.white,

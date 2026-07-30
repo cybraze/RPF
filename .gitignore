@@ -34,6 +34,7 @@ migrate_working_dir/
 .pub/
 /build/
 android/local.properties
+android/.kotlin/
 
 # Symbolication related
 app.*.symbols
@@ -45,3 +46,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Release keystore — never commit to git
+*.jks
+*.keystore

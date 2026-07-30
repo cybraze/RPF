@@ -28,8 +28,8 @@ class SessionManager {
       await ApiService.getHomeProfile(token);
       return true;
     } on SessionExpiredException {
-      final configMessage =
-          'Aapka account kisi aur device par login ho gaya hai. Is device par session automatically logout kar diya gaya.';
+      const configMessage =
+          'Your account has been logged in on another device. You have been automatically logged out on this device.';
       await forceLogoutToLogin(message: configMessage);
       return false;
     } catch (_) {

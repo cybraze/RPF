@@ -26,6 +26,8 @@ dependencies:
   http: ^1.2.1
   shared_preferences: ^2.2.3
   image_picker: ^1.1.2
+  file_picker: ^8.1.7
+  url_launcher: ^6.3.1
   image_cropper: ^8.1.0
   battery_plus: ^6.0.3
   flutter_foreground_task: ^8.0.0
@@ -63,5 +65,9 @@ flutter_launcher_icons:
 
 dependency_overrides:
   image_cropper_platform_interface: 7.1.0
+
+
+
+
 
 

@@ -70,13 +70,13 @@ String userFriendlyErrorMessage(
       lower.contains('gps is turned off') ||
       lower.contains('location services enable') ||
       lower.contains('location services are off')) {
-    return 'Location is off. Enable GPS and retry.';
+    return 'Location is turned off. Please enable GPS and try again.';
   }
 
   if (lower.contains('location permission') ||
       lower.contains('permission was not granted') ||
       lower.contains('permission nahi mili')) {
-    return 'Location permission denied. Allow it in Settings.';
+    return 'Location permission denied. Please allow it in Settings.';
   }
 
   if (lower.contains('location not found') || lower.contains('weak gps')) {

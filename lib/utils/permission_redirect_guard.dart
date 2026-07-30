@@ -47,7 +47,7 @@ class PermissionRedirectGuard {
         ..showSnackBar(
           const SnackBar(
             content: Text(
-              'App use karne ke liye sabhi required permissions complete kariye.',
+              'All required permissions must be granted to use this app.',
             ),
           ),
         );
