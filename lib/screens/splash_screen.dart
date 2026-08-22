@@ -3,12 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:provider/provider.dart';
+import '../models/app_version_policy.dart';
 import '../utils/storage.dart';
 import '../utils/background_tracking_prep.dart';
 import '../utils/session_manager.dart';
+import '../services/app_version_guard.dart';
 import '../services/duty_resume_service.dart';
 import '../services/tracking_service.dart';
 import '../widgets/app_logo.dart';
+import 'force_update_screen.dart';
 import 'login_screen.dart';
 import 'dashboard_screen.dart';
 import 'tracking_setup_screen.dart';
@@ -109,6 +112,16 @@ class _SplashScreenState extends State<SplashScreen>
 
   // Loads all data needed for navigation — runs in parallel with animation
   Future<_NavData> _loadNavData() async {
+    final versionResult = await AppVersionGuard.check();
+    if (versionResult.updateRequired && versionResult.policy != null) {
+      return _NavData(
+        token: null,
+        updatePolicy: versionResult.policy,
+        installedVersionCode: versionResult.installedVersionCode,
+        fromCachedPolicy: versionResult.fromCachedPolicy,
+      );
+    }
+
     final token = await Storage.getToken();
     if (token == null || token.isEmpty) return const _NavData(token: null);
 
@@ -126,6 +139,20 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _doNavigate(_NavData data) async {
+    if (data.updatePolicy != null) {
+      Navigator.pushReplacement(
+        context,
+        _fadeRoute(
+          ForceUpdateScreen(
+            policy: data.updatePolicy!,
+            installedVersionCode: data.installedVersionCode,
+            fromCachedPolicy: data.fromCachedPolicy,
+          ),
+        ),
+      );
+      return;
+    }
+
     if (data.sessionInvalid) return; // SessionManager already redirected
 
     if (data.token == null) {
@@ -474,11 +501,17 @@ class _NavData {
   final bool sessionInvalid;
   final int? activeDutyLogId;
   final int? activeDeploymentId;
+  final AppVersionPolicy? updatePolicy;
+  final int installedVersionCode;
+  final bool fromCachedPolicy;
 
   const _NavData({
     required this.token,
     this.sessionInvalid = false,
     this.activeDutyLogId,
     this.activeDeploymentId,
+    this.updatePolicy,
+    this.installedVersionCode = 1,
+    this.fromCachedPolicy = false,
   });
 }

@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/active_duty_geofence.dart';
+import '../models/app_version_policy.dart';
 import '../models/beat_sector_models.dart';
 import '../models/user_profile.dart';
 
@@ -14,6 +17,8 @@ class Storage {
   static const _userProfileKey = 'user_profile';
   static const _permissionPromptPrefix = 'permission_prompt_';
   static const _beatMappingDraftPrefix = 'beat_mapping_draft_';
+  static const _appVersionPolicyKey = 'app_version_policy';
+  static const _appUpdateRequiredKey = 'app_update_required';
 
   static Future<void> saveToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
@@ -168,5 +173,36 @@ class Storage {
   static Future<void> clearPermissionPrompt(String key) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('$_permissionPromptPrefix$key');
+  }
+
+  static Future<void> saveAppVersionPolicy(
+    AppVersionPolicy policy, {
+    required bool updateRequired,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_appVersionPolicyKey, jsonEncode(policy.toJson()));
+    await prefs.setBool(_appUpdateRequiredKey, updateRequired);
+  }
+
+  static Future<AppVersionPolicy?> getAppVersionPolicy() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_appVersionPolicyKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      return AppVersionPolicy.fromJson(data);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> wasAppUpdateRequired() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_appUpdateRequiredKey) ?? false;
+  }
+
+  static Future<void> clearAppUpdateRequired() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_appUpdateRequiredKey, false);
   }
 }

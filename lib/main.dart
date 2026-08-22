@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'utils/theme_provider.dart';
+import 'services/app_version_guard.dart';
 import 'services/network_status_service.dart';
 import 'services/tracking_service.dart';
 import 'screens/splash_screen.dart';
@@ -86,7 +89,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      PermissionRedirectGuard.enforceRequiredPermissions();
+      unawaited(_handleAppResumed());
+    }
+  }
+
+  Future<void> _handleAppResumed() async {
+    final updateBlocked =
+        await AppVersionGuard.enforceOnNavigator(SessionManager.navigatorKey);
+    if (!updateBlocked) {
+      await PermissionRedirectGuard.enforceRequiredPermissions();
     }
   }
 

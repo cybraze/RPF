@@ -113,6 +113,13 @@ class _TrackingSetupScreenState extends State<TrackingSetupScreen>
   }
 
   Future<void> _handleLocationPermission() async {
+    final accepted = await _showLocationDisclosure();
+    if (accepted != true) {
+      setState(() {
+        _message = 'Location disclosure must be accepted to continue setup.';
+      });
+      return;
+    }
     final permission = await Geolocator.checkPermission();
     if (permission != LocationPermission.always) {
       final opened = await DeviceSettingsService.openAppDetailsSettings();
@@ -122,6 +129,38 @@ class _TrackingSetupScreenState extends State<TrackingSetupScreen>
     }
     await Future.delayed(const Duration(milliseconds: 500));
     await _refreshStatus();
+  }
+
+  Future<bool?> _showLocationDisclosure() {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Location Access Required',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+        ),
+        content: const Text(
+          'TRINETRA collects location data to enable duty tracking, beat/post verification, movement logs and official monitoring during active duty. Location may be collected in the background during active duty/tracking, even when the app is closed or not actively in use.\n\nThis data is used only for official RPF/WCR duty management and is not used for advertising.',
+          style: TextStyle(fontSize: 14, height: 1.35),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1E3A8A),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _handleLocationService() async {
@@ -163,6 +202,8 @@ class _TrackingSetupScreenState extends State<TrackingSetupScreen>
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
                     children: [
+                      const _LocationDisclosureCard(),
+                      const SizedBox(height: 10),
                       _SetupRow(
                         title: 'Notification permission',
                         subtitle:
@@ -250,6 +291,52 @@ class _TrackingSetupScreenState extends State<TrackingSetupScreen>
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _LocationDisclosureCard extends StatelessWidget {
+  const _LocationDisclosureCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFFED7AA)),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.location_on_rounded, color: Color(0xFFC2410C)),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Location use disclosure',
+                  style: TextStyle(
+                    color: Color(0xFF9A3412),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 8),
+          Text(
+            'TRINETRA collects location data for official duty tracking, beat/post verification, movement logs and monitoring during active duty. Location may be collected in the background during active duty/tracking, even when the app is closed or not actively in use. This data is used only for official RPF/WCR duty management and is not used for advertising.',
+            style: TextStyle(
+              color: Color(0xFF7C2D12),
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+        ],
       ),
     );
   }

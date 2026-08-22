@@ -80,7 +80,16 @@ class _BeatSectorHomeScreenState extends State<BeatSectorHomeScreen> {
                 final cards = (snapshot.data?.cards ?? const [])
                     .where((card) => !_isAssignedBeatsCard(card))
                     .toList();
-                if (cards.isEmpty) {
+                final visibleCards = [
+                  const BeatSectorHomeCard(
+                    key: 'inspection_schedule',
+                    title: 'Inspection Schedule',
+                    subtitle: 'Date-wise inspection deployment',
+                    visible: true,
+                  ),
+                  ...cards,
+                ];
+                if (visibleCards.isEmpty) {
                   return const _EmptyState(
                     icon: Icons.dashboard_customize_outlined,
                     title: 'No Beat Sector cards available',
@@ -101,9 +110,9 @@ class _BeatSectorHomeScreenState extends State<BeatSectorHomeScreen> {
                       crossAxisSpacing: 12,
                       mainAxisSpacing: 12,
                     ),
-                    itemCount: cards.length,
+                    itemCount: visibleCards.length,
                     itemBuilder: (_, index) {
-                      final card = cards[index];
+                      final card = visibleCards[index];
                       return _HomeActionCard(
                         card: card,
                         onTap: () => _openCard(card),
@@ -120,12 +129,19 @@ class _BeatSectorHomeScreenState extends State<BeatSectorHomeScreen> {
   }
 
   bool _isAssignedBeatsCard(BeatSectorHomeCard card) {
-    final value = (card.key + ' ' + card.title).toLowerCase();
+    final value = '${card.key} ${card.title}'.toLowerCase();
     return value.contains('assigned') || value.contains('my assigned');
   }
 
   void _openCard(BeatSectorHomeCard card) {
     final key = card.key.toLowerCase();
+    if (key.contains('schedule') || key.contains('deployment')) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const BeatInspectionScheduleScreen()),
+      );
+      return;
+    }
     if (key.contains('inspection') && key.contains('history')) {
       Navigator.push(
         context,
@@ -158,6 +174,357 @@ class _BeatSectorHomeScreenState extends State<BeatSectorHomeScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const BeatListScreen()),
+    );
+  }
+}
+
+class BeatInspectionScheduleScreen extends StatefulWidget {
+  const BeatInspectionScheduleScreen({super.key});
+
+  @override
+  State<BeatInspectionScheduleScreen> createState() =>
+      _BeatInspectionScheduleScreenState();
+}
+
+class _BeatInspectionScheduleScreenState
+    extends State<BeatInspectionScheduleScreen> with WidgetsBindingObserver {
+  final _scroll = ScrollController();
+  final List<InspectionDeployment> _items = [];
+  InspectionDeploymentStatus _status = InspectionDeploymentStatus.all;
+  int _page = 1;
+  bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = false;
+  bool _actionRunning = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _scroll.addListener(_onScroll);
+    _load(reset: true);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _load(reset: true, quiet: true);
+    }
+  }
+
+  void _onScroll() {
+    if (!_hasMore || _loading || _loadingMore) return;
+    if (_scroll.position.extentAfter < 320) {
+      _load(reset: false);
+    }
+  }
+
+  Future<void> _load({required bool reset, bool quiet = false}) async {
+    if (reset) {
+      _page = 1;
+      if (!quiet) {
+        setState(() {
+          _loading = true;
+          _error = null;
+        });
+      }
+    } else {
+      setState(() => _loadingMore = true);
+    }
+    try {
+      final token = await _token();
+      final page = await ApiService.getInspectionDeployments(
+        token,
+        status: _status,
+        page: _page,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (reset) _items.clear();
+        _items.addAll(page.items);
+        _hasMore = page.hasMore;
+        _page = page.currentPage + 1;
+        _loading = false;
+        _loadingMore = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = userFriendlyErrorMessage(e);
+        _loading = false;
+        _loadingMore = false;
+      });
+    }
+  }
+
+  Future<void> _refresh() => _load(reset: true, quiet: true);
+
+  void _changeStatus(InspectionDeploymentStatus status) {
+    if (_status == status) return;
+    setState(() => _status = status);
+    _load(reset: true);
+  }
+
+  Future<void> _startOrResume(InspectionDeployment item) async {
+    if (_actionRunning) return;
+    if (deploymentActionLabel(item) == null) return;
+    if (!await _hasNetwork()) {
+      _snack('No connection. Scheduled inspection cannot start offline.', true);
+      return;
+    }
+    setState(() => _actionRunning = true);
+    try {
+      int? inspectionId = item.inspectionId;
+      if (item.canStart) {
+        final token = await _token();
+        final started = await ApiService.startBeatInspection(
+          token,
+          item.beat.id,
+          deploymentId: item.id,
+        );
+        final inspection = started['inspection'] is Map
+            ? (started['inspection'] as Map).cast<String, dynamic>()
+            : started;
+        inspectionId = _asInt(inspection['id']);
+      }
+      if (inspectionId == null) throw Exception('Inspection id missing.');
+      if (!mounted) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BeatInspectionScreen(
+            beat: item.beat,
+            inspectionId: inspectionId,
+            deploymentId: item.id,
+            onFinished: () => _load(reset: true, quiet: true),
+          ),
+        ),
+      );
+      await _load(reset: true, quiet: true);
+    } catch (e) {
+      if (mounted) _snack(userFriendlyErrorMessage(e), true);
+    } finally {
+      if (mounted) setState(() => _actionRunning = false);
+    }
+  }
+
+  Future<bool> _hasNetwork() async {
+    try {
+      final result =
+          await InternetAddress.lookup(Uri.parse(ApiService.baseUrl).host)
+              .timeout(const Duration(seconds: 4));
+      return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Scaffold(
+      backgroundColor: isDark ? const Color(0xFF0D1B2E) : _bgLight,
+      body: Column(
+        children: [
+          _Header(title: 'Inspection Schedule', onRefresh: () => _refresh()),
+          _ScheduleFilters(selected: _status, onChanged: _changeStatus),
+          Expanded(child: _buildBody()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading && _items.isEmpty) {
+      return const _LoadingState(label: 'Loading inspection schedule...');
+    }
+    if (_error != null && _items.isEmpty) {
+      return _ErrorState(message: _error!, onRetry: () => _load(reset: true));
+    }
+    if (_items.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _refresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: const [
+            SizedBox(height: 120),
+            _EmptyState(
+              icon: Icons.event_busy_outlined,
+              title: 'No scheduled inspections',
+              message: 'Assigned inspections will appear here.',
+            ),
+          ],
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: ListView.builder(
+        controller: _scroll,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        itemCount: _items.length + (_loadingMore ? 1 : 0),
+        itemBuilder: (_, index) {
+          if (index >= _items.length) {
+            return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            );
+          }
+          final item = _items[index];
+          return _DeploymentCard(
+            item: item,
+            busy: _actionRunning,
+            onAction: () => _startOrResume(item),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ScheduleFilters extends StatelessWidget {
+  final InspectionDeploymentStatus selected;
+  final ValueChanged<InspectionDeploymentStatus> onChanged;
+
+  const _ScheduleFilters({required this.selected, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      color: isDark ? const Color(0xFF0D1B2E) : _bgLight,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: InspectionDeploymentStatus.values.map((status) {
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ChoiceChip(
+                selected: selected == status,
+                label: Text(status.label),
+                onSelected: (_) => onChanged(status),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+}
+
+class _DeploymentCard extends StatelessWidget {
+  final InspectionDeployment item;
+  final bool busy;
+  final VoidCallback onAction;
+
+  const _DeploymentCard({
+    required this.item,
+    required this.busy,
+    required this.onAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final action = deploymentActionLabel(item);
+    return _Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  _formatScheduleDate(item.scheduledDate),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              _StatusChip(status: item.status, label: item.statusLabel),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            item.beat.code.isEmpty
+                ? item.beat.name
+                : '${item.beat.name} (${item.beat.code})',
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              if (item.beat.sector.isNotEmpty)
+                _InfoChip(
+                    icon: Icons.grid_view_outlined, label: item.beat.sector),
+              if (item.beat.post.isNotEmpty)
+                _InfoChip(
+                    icon: Icons.apartment_outlined, label: item.beat.post),
+              _InfoChip(
+                icon: Icons.notes_outlined,
+                label: '${item.observationsCount} observations',
+              ),
+            ],
+          ),
+          if (item.instructions.trim().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(item.instructions, style: const TextStyle(color: _textSec)),
+          ],
+          if (action != null) ...[
+            const SizedBox(height: 12),
+            _FullButton(
+              icon: item.canResume
+                  ? Icons.play_circle_outline
+                  : Icons.flag_outlined,
+              label: busy ? 'Please wait...' : action,
+              onPressed: busy ? null : onAction,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusChip extends StatelessWidget {
+  final String status;
+  final String label;
+
+  const _StatusChip({required this.status, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _deploymentStatusColor(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
     );
   }
 }
@@ -1019,8 +1386,17 @@ class _MasterTypeScreen extends StatelessWidget {
 
 class BeatInspectionScreen extends StatefulWidget {
   final SectorBeat beat;
+  final int? inspectionId;
+  final int? deploymentId;
+  final VoidCallback? onFinished;
 
-  const BeatInspectionScreen({super.key, required this.beat});
+  const BeatInspectionScreen({
+    super.key,
+    required this.beat,
+    this.inspectionId,
+    this.deploymentId,
+    this.onFinished,
+  });
 
   @override
   State<BeatInspectionScreen> createState() => _BeatInspectionScreenState();
@@ -1037,7 +1413,7 @@ class _BeatInspectionScreenState extends State<BeatInspectionScreen> {
   bool _saving = false;
   bool _finishing = false;
   String? _error;
-  List<Map<String, dynamic>> _previousInspections = const [];
+  List<Map<String, dynamic>> _previousObservations = const [];
 
   @override
   void initState() {
@@ -1058,8 +1434,13 @@ class _BeatInspectionScreenState extends State<BeatInspectionScreen> {
     });
     try {
       final token = await _token();
-      final started =
-          await ApiService.startBeatInspection(token, widget.beat.id);
+      final started = widget.inspectionId == null
+          ? await ApiService.startBeatInspection(
+              token,
+              widget.beat.id,
+              deploymentId: widget.deploymentId,
+            )
+          : <String, dynamic>{'id': widget.inspectionId};
       final inspection = started['inspection'] is Map
           ? (started['inspection'] as Map).cast<String, dynamic>()
           : started;
@@ -1069,12 +1450,13 @@ class _BeatInspectionScreenState extends State<BeatInspectionScreen> {
           : await ApiService.getBeatInspection(token, id);
       final lookups = await ApiService.getBeatLookups(token);
       final previous = await ApiService.getBeatInspections(token);
-      final beatHistory = previous.where(_isSameBeatInspection).toList();
+      final previousObservations =
+          await _loadPreviousObservations(token, previous, id);
       if (!mounted) return;
       setState(() {
         _inspection = detail;
         _lookups = lookups;
-        _previousInspections = beatHistory;
+        _previousObservations = previousObservations;
         _loading = false;
       });
     } catch (e) {
@@ -1177,6 +1559,7 @@ class _BeatInspectionScreenState extends State<BeatInspectionScreen> {
       await ApiService.finishBeatInspection(token, id);
       if (mounted) {
         _snack('Inspection completed.', false);
+        widget.onFinished?.call();
         Navigator.pop(context);
       }
     } catch (e) {
@@ -1206,6 +1589,41 @@ class _BeatInspectionScreenState extends State<BeatInspectionScreen> {
     return beatName.isNotEmpty && beatName == widget.beat.name.toLowerCase();
   }
 
+  Future<List<Map<String, dynamic>>> _loadPreviousObservations(
+    String token,
+    List<Map<String, dynamic>> inspections,
+    int? currentInspectionId,
+  ) async {
+    final observations = <Map<String, dynamic>>[];
+    final beatHistory = inspections.where((item) {
+      final inspectionId = _asInt(item['id']);
+      return inspectionId != currentInspectionId && _isSameBeatInspection(item);
+    }).toList();
+
+    for (final inspection in beatHistory.take(5)) {
+      var detail = inspection;
+      var items = _inspectionItems(detail);
+      final inspectionId = _asInt(inspection['id']);
+      if (items.isEmpty && inspectionId != null) {
+        detail = await ApiService.getBeatInspection(token, inspectionId);
+        items = _inspectionItems(detail);
+      }
+      final inspectionDate = _cleanDisplay(
+        detail['completed_at'] ?? detail['started_at'] ?? detail['created_at'],
+      );
+      observations.addAll(
+        items.map((item) {
+          final copy = Map<String, dynamic>.from(item);
+          copy.putIfAbsent('captured_at', () => inspectionDate);
+          return copy;
+        }),
+      );
+      if (observations.length >= 5) break;
+    }
+
+    return observations.take(5).toList();
+  }
+
   int? get _inspectionId {
     final data = _inspection;
     if (data == null) return null;
@@ -1214,11 +1632,19 @@ class _BeatInspectionScreenState extends State<BeatInspectionScreen> {
 
   List<Map<String, dynamic>> get _items {
     final data = _inspection ?? const {};
+    return _inspectionItems(data);
+  }
+
+  List<Map<String, dynamic>> _inspectionItems(Map<String, dynamic> data) {
+    final inspection = data['inspection'] is Map
+        ? (data['inspection'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
     final raw = data['items'] ??
         data['observations'] ??
-        (data['inspection'] is Map
-            ? (data['inspection'] as Map)['items']
-            : null);
+        data['inspection_items'] ??
+        inspection['items'] ??
+        inspection['observations'] ??
+        inspection['inspection_items'];
     return (raw as List? ?? const [])
         .whereType<Map>()
         .map((e) => e.cast<String, dynamic>())
@@ -1233,10 +1659,12 @@ class _BeatInspectionScreenState extends State<BeatInspectionScreen> {
           const _Header(title: 'Beat Inspection'),
           Expanded(
             child: Builder(builder: (_) {
-              if (_loading)
+              if (_loading) {
                 return const _LoadingState(label: 'Starting inspection...');
-              if (_error != null)
+              }
+              if (_error != null) {
                 return _ErrorState(message: _error!, onRetry: _start);
+              }
               return ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
@@ -1337,32 +1765,19 @@ class _BeatInspectionScreenState extends State<BeatInspectionScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Previous History For This Beat',
+                        const Text('Previous Observations On This Beat',
                             style: TextStyle(fontWeight: FontWeight.w800)),
                         const SizedBox(height: 8),
-                        if (_previousInspections.isEmpty)
-                          const Text('No previous inspection history found.',
+                        if (_previousObservations.isEmpty)
+                          const Text('No previous observations found.',
                               style: TextStyle(color: _textSec))
                         else
-                          ..._previousInspections.take(5).map(
-                                (item) => ListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: const Icon(Icons.history_outlined),
-                                  title: Text(
-                                    (item['status_label'] ??
-                                            item['status'] ??
-                                            'Inspection')
-                                        .toString(),
-                                  ),
-                                  subtitle: Text(
-                                    (item['completed_at'] ??
-                                            item['started_at'] ??
-                                            item['created_at'] ??
-                                            '')
-                                        .toString(),
-                                  ),
-                                ),
-                              ),
+                          ..._previousObservations.map(
+                            (item) => _ObservationTile(
+                              item: item,
+                              onOpenAttachment: _openAttachment,
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -1592,6 +2007,34 @@ String _formatObservationTime(String value) {
   final hour = local.hour.toString().padLeft(2, '0');
   final minute = local.minute.toString().padLeft(2, '0');
   return '$day-$month-${local.year} $hour:$minute';
+}
+
+String _formatScheduleDate(DateTime? value) {
+  if (value == null) return '-';
+  final day = value.day.toString().padLeft(2, '0');
+  final month = value.month.toString().padLeft(2, '0');
+  return '$day-$month-${value.year}';
+}
+
+String? deploymentActionLabel(InspectionDeployment item) {
+  if (item.canStart) return 'Start';
+  if (item.canResume && item.inspectionId != null) return 'Resume';
+  return null;
+}
+
+Color _deploymentStatusColor(String status) {
+  switch (status) {
+    case 'pending':
+      return _orange;
+    case 'in_progress':
+      return _indigo;
+    case 'completed':
+      return _green;
+    case 'missed':
+      return _red;
+    default:
+      return _textSec;
+  }
 }
 
 class BeatInspectionHistoryScreen extends StatefulWidget {
@@ -2474,7 +2917,7 @@ class _FullButton extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: _indigo,
           foregroundColor: Colors.white,
-          disabledBackgroundColor: _indigo.withOpacity(0.45),
+          disabledBackgroundColor: _indigo.withValues(alpha: 0.45),
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
@@ -2554,7 +2997,7 @@ class _Badge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: _indigo.withOpacity(0.1),
+        color: _indigo.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(99),
       ),
       child: Text(
@@ -2586,7 +3029,7 @@ class _MiniInfo extends StatelessWidget {
         border: Border.all(color: isDark ? Colors.white12 : _border),
       ),
       child: Text(
-        label + ': ' + value,
+        '$label: $value',
         style: TextStyle(
           color: isDark ? Colors.white70 : const Color(0xFF344054),
           fontSize: 11,
@@ -2610,7 +3053,7 @@ class _Notice extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(text, style: TextStyle(color: color, fontSize: 12)),
@@ -2706,19 +3149,6 @@ class _BeatDetailData {
   final BeatMapping? mapping;
 
   const _BeatDetailData(this.beat, this.mapping);
-}
-
-InputDecoration _input(String label) {
-  return InputDecoration(
-    labelText: label,
-    filled: true,
-    fillColor: _bgLight,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: _border),
-    ),
-  );
 }
 
 InputDecoration _themedInput(BuildContext context, String label) {

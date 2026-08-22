@@ -264,6 +264,167 @@ class BeatPage {
   }
 }
 
+enum InspectionDeploymentStatus {
+  all,
+  pending,
+  inProgress,
+  completed,
+  missed,
+}
+
+extension InspectionDeploymentStatusApi on InspectionDeploymentStatus {
+  String get apiValue {
+    switch (this) {
+      case InspectionDeploymentStatus.all:
+        return 'all';
+      case InspectionDeploymentStatus.pending:
+        return 'pending';
+      case InspectionDeploymentStatus.inProgress:
+        return 'in_progress';
+      case InspectionDeploymentStatus.completed:
+        return 'completed';
+      case InspectionDeploymentStatus.missed:
+        return 'missed';
+    }
+  }
+
+  String get label {
+    switch (this) {
+      case InspectionDeploymentStatus.all:
+        return 'All';
+      case InspectionDeploymentStatus.pending:
+        return 'Pending';
+      case InspectionDeploymentStatus.inProgress:
+        return 'In Progress';
+      case InspectionDeploymentStatus.completed:
+        return 'Completed';
+      case InspectionDeploymentStatus.missed:
+        return 'Missed';
+    }
+  }
+}
+
+class InspectionDeployment {
+  final int id;
+  final DateTime? scheduledDate;
+  final String status;
+  final String instructions;
+  final bool canStart;
+  final bool canResume;
+  final int? inspectionId;
+  final int observationsCount;
+  final SectorBeat beat;
+  final Map<String, dynamic> raw;
+
+  const InspectionDeployment({
+    required this.id,
+    required this.scheduledDate,
+    required this.status,
+    required this.instructions,
+    required this.canStart,
+    required this.canResume,
+    required this.inspectionId,
+    required this.observationsCount,
+    required this.beat,
+    required this.raw,
+  });
+
+  factory InspectionDeployment.fromJson(Map<String, dynamic> json) {
+    final beatJson = json['beat'] is Map
+        ? (json['beat'] as Map).cast<String, dynamic>()
+        : <String, dynamic>{};
+    return InspectionDeployment(
+      id: _asInt(json['id'] ?? json['deployment_id']) ?? 0,
+      scheduledDate: DateTime.tryParse(
+        (json['scheduled_date'] ?? json['date'] ?? '').toString(),
+      ),
+      status: (json['status'] ?? '').toString(),
+      instructions: (json['instructions'] ?? '').toString(),
+      canStart: BeatSectorAccess._asBool(json['can_start']),
+      canResume: BeatSectorAccess._asBool(json['can_resume']),
+      inspectionId: _asInt(json['inspection_id']),
+      observationsCount: _asInt(json['observations_count']) ?? 0,
+      beat: SectorBeat.fromJson({
+        ...beatJson,
+        'capabilities': beatJson['capabilities'] ??
+            const {
+              'can_view': true,
+              'can_inspect': true,
+              'can_manage_master': false,
+              'can_map_polyline': false,
+            },
+      }),
+      raw: json,
+    );
+  }
+
+  bool get isPending => status == 'pending';
+  bool get isInProgress => status == 'in_progress';
+  bool get isCompleted => status == 'completed';
+  bool get isMissed => status == 'missed';
+
+  String get statusLabel {
+    switch (status) {
+      case 'pending':
+        return 'Pending';
+      case 'in_progress':
+        return 'In Progress';
+      case 'completed':
+        return 'Completed';
+      case 'missed':
+        return 'Missed';
+      default:
+        return status.isEmpty ? 'Pending' : status;
+    }
+  }
+}
+
+class InspectionDeploymentPage {
+  final List<InspectionDeployment> items;
+  final int currentPage;
+  final int perPage;
+  final int total;
+  final int lastPage;
+  final bool hasMore;
+
+  const InspectionDeploymentPage({
+    required this.items,
+    required this.currentPage,
+    required this.perPage,
+    required this.total,
+    required this.lastPage,
+    required this.hasMore,
+  });
+
+  factory InspectionDeploymentPage.fromJson(Map<String, dynamic> json) {
+    final data = json['data'] is Map
+        ? (json['data'] as Map).cast<String, dynamic>()
+        : json;
+    final list = (data['items'] ??
+            data['deployments'] ??
+            data['inspection_deployments'] ??
+            data['data']) as List? ??
+        const [];
+    final pagination = data['pagination'] is Map
+        ? (data['pagination'] as Map).cast<String, dynamic>()
+        : data;
+    final currentPage = _asInt(pagination['current_page']) ?? 1;
+    final lastPage = _asInt(pagination['last_page']) ?? currentPage;
+    return InspectionDeploymentPage(
+      items: list
+          .whereType<Map>()
+          .map((e) => InspectionDeployment.fromJson(e.cast<String, dynamic>()))
+          .toList(),
+      currentPage: currentPage,
+      perPage: _asInt(pagination['per_page']) ?? 20,
+      total: _asInt(pagination['total']) ?? list.length,
+      lastPage: lastPage,
+      hasMore: BeatSectorAccess._asBool(pagination['has_more']) ||
+          currentPage < lastPage,
+    );
+  }
+}
+
 class BeatMapping {
   final int bufferMeter;
   final List<BeatPoint> points;

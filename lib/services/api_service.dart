@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
+import '../models/app_version_policy.dart';
 import '../models/inspection_task.dart';
 import '../models/tracking_point.dart';
 import '../models/user_profile.dart';
@@ -76,6 +77,21 @@ class ApiService {
       data['user'] ?? data['employee'] ?? data['profile'] ?? data,
     );
     return profile;
+  }
+
+  static Future<AppVersionPolicy> getAppVersionPolicy() async {
+    final response = await http.get(
+      AppConfig.apiUri('app/version'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) {
+      return AppVersionPolicy.fromJson(data);
+    }
+    throw Exception(data['message'] ?? 'Failed to check app version');
   }
 
   static Future<UserProfile?> getCurrentUserProfile(String token) async {
@@ -1013,10 +1029,62 @@ class ApiService {
         response.statusCode, data, 'Failed to delete master data');
   }
 
+  static Map<String, dynamic> buildStartBeatInspectionPayload({
+    required int beatId,
+    int? deploymentId,
+  }) {
+    return {
+      if (deploymentId != null) 'deployment_id': deploymentId,
+      'sector_beat_id': beatId,
+    };
+  }
+
+  static Future<InspectionDeploymentPage> getInspectionDeployments(
+    String token, {
+    InspectionDeploymentStatus status = InspectionDeploymentStatus.all,
+    DateTime? from,
+    DateTime? to,
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    String date(DateTime value) {
+      final month = value.month.toString().padLeft(2, '0');
+      final day = value.day.toString().padLeft(2, '0');
+      return '${value.year}-$month-$day';
+    }
+
+    final response = await http.get(
+      AppConfig.apiUri('beat-sector/inspection-deployments').replace(
+        queryParameters: {
+          'status': status.apiValue,
+          if (from != null) 'from': date(from),
+          if (to != null) 'to': date(to),
+          'page': page.toString(),
+          'per_page': perPage.toString(),
+        },
+      ),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final data = _decodeJson(response);
+    if (response.statusCode == 200) {
+      return InspectionDeploymentPage.fromJson(data);
+    }
+    _throwBeatApiError(
+      response.statusCode,
+      data,
+      'Failed to load inspection schedule',
+    );
+  }
+
   static Future<Map<String, dynamic>> startBeatInspection(
     String token,
-    int beatId,
-  ) async {
+    int beatId, {
+    int? deploymentId,
+  }) async {
     final response = await http.post(
       AppConfig.apiUri('beat-sector/inspections'),
       headers: {
@@ -1024,7 +1092,12 @@ class ApiService {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-      body: jsonEncode({'sector_beat_id': beatId}),
+      body: jsonEncode(
+        buildStartBeatInspectionPayload(
+          beatId: beatId,
+          deploymentId: deploymentId,
+        ),
+      ),
     );
     final data = _decodeJson(response);
     if (response.statusCode == 200 || response.statusCode == 201) {

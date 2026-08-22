@@ -1,4 +1,4 @@
-package com.example.rpf_flutter
+package `in`.rpfwcr
 
 import android.content.Intent
 import android.net.Uri
