@@ -1636,19 +1636,7 @@ class _BeatInspectionScreenState extends State<BeatInspectionScreen> {
   }
 
   List<Map<String, dynamic>> _inspectionItems(Map<String, dynamic> data) {
-    final inspection = data['inspection'] is Map
-        ? (data['inspection'] as Map).cast<String, dynamic>()
-        : const <String, dynamic>{};
-    final raw = data['items'] ??
-        data['observations'] ??
-        data['inspection_items'] ??
-        inspection['items'] ??
-        inspection['observations'] ??
-        inspection['inspection_items'];
-    return (raw as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => e.cast<String, dynamic>())
-        .toList();
+    return _extractInspectionItems(data);
   }
 
   @override
@@ -2115,9 +2103,166 @@ class _BeatInspectionHistoryScreenState
                                   '')
                               .toString(),
                         ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  _InspectionHistoryDetailScreen(summary: item),
+                            ),
+                          );
+                        },
                       ),
                     );
                   },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InspectionHistoryDetailScreen extends StatefulWidget {
+  final Map<String, dynamic> summary;
+
+  const _InspectionHistoryDetailScreen({required this.summary});
+
+  @override
+  State<_InspectionHistoryDetailScreen> createState() =>
+      _InspectionHistoryDetailScreenState();
+}
+
+class _InspectionHistoryDetailScreenState
+    extends State<_InspectionHistoryDetailScreen> {
+  late Future<Map<String, dynamic>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<Map<String, dynamic>> _load() async {
+    final id = _asInt(widget.summary['id']);
+    if (id == null) return widget.summary;
+    final token = await _token();
+    try {
+      return await ApiService.getBeatInspection(token, id);
+    } catch (_) {
+      return widget.summary;
+    }
+  }
+
+  Future<void> _openAttachment(String source) async {
+    final url = _attachmentUri(source);
+    if (url == null) {
+      _snack('Attachment link not available.', true);
+      return;
+    }
+    final opened = await launchUrl(url, mode: LaunchMode.externalApplication);
+    if (!opened) {
+      _snack('Unable to open attachment.', true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Column(
+        children: [
+          const _Header(title: 'Inspection Detail'),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>>(
+              future: _future,
+              builder: (_, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const _LoadingState(
+                      label: 'Loading inspection detail...');
+                }
+                if (snapshot.hasError) {
+                  return _ErrorState(
+                    message: userFriendlyErrorMessage(snapshot.error ?? ""),
+                    onRetry: () => setState(() => _future = _load()),
+                  );
+                }
+                final data = snapshot.data ?? widget.summary;
+                final items = _extractInspectionItems(data);
+                final beatName = _cleanDisplay(
+                  data['beat_name'] ??
+                      data['sector_beat_name'] ??
+                      widget.summary['beat_name'] ??
+                      widget.summary['sector_beat_name'],
+                );
+                final status = _cleanDisplay(data['status']);
+                final startedAt = _cleanDisplay(
+                  data['started_at'] ?? widget.summary['started_at'],
+                );
+                final completedAt = _cleanDisplay(
+                  data['completed_at'] ?? widget.summary['completed_at'],
+                );
+
+                return ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    _Card(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            beatName.isEmpty ? 'Inspection' : beatName,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              if (status.isNotEmpty)
+                                _InfoChip(
+                                    icon: Icons.flag_outlined, label: status),
+                              if (startedAt.isNotEmpty)
+                                _InfoChip(
+                                  icon: Icons.play_circle_outline,
+                                  label: 'Started: $startedAt',
+                                ),
+                              if (completedAt.isNotEmpty)
+                                _InfoChip(
+                                  icon: Icons.check_circle_outline,
+                                  label: 'Completed: $completedAt',
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _Card(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Observations (${items.length})',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 8),
+                          if (items.isEmpty)
+                            const Text('No observations recorded.',
+                                style: TextStyle(color: _textSec))
+                          else
+                            ...items.map(
+                              (item) => _ObservationTile(
+                                item: item,
+                                onOpenAttachment: _openAttachment,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -3233,6 +3378,22 @@ Future<Position> _currentPosition() async {
   return LocationSampler.getBestEffortPosition(
     perSampleTimeout: const Duration(seconds: 20),
   );
+}
+
+List<Map<String, dynamic>> _extractInspectionItems(Map<String, dynamic> data) {
+  final inspection = data['inspection'] is Map
+      ? (data['inspection'] as Map).cast<String, dynamic>()
+      : const <String, dynamic>{};
+  final raw = data['items'] ??
+      data['observations'] ??
+      data['inspection_items'] ??
+      inspection['items'] ??
+      inspection['observations'] ??
+      inspection['inspection_items'];
+  return (raw as List? ?? const [])
+      .whereType<Map>()
+      .map((e) => e.cast<String, dynamic>())
+      .toList();
 }
 
 int? _asInt(dynamic value) {
