@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:flutter_activity_recognition/flutter_activity_recognition.dart'
+    as activity_recognition;
 
 import '../services/device_settings_service.dart';
 import 'storage.dart';
@@ -11,25 +13,42 @@ const _locationPromptKey = 'location_access';
 const _backgroundLocationPromptKey = 'background_location_access';
 const _batteryPromptKey = 'battery_optimization';
 const _notificationPromptKey = 'notification_permission';
+const _activityPromptKey = 'activity_recognition_access';
 
 class TrackingSetupStatus {
   final bool notificationAllowed;
   final bool locationAlwaysAllowed;
   final bool locationServiceEnabled;
   final bool batteryUnrestricted;
+  final bool activityRecognitionAllowed;
 
   const TrackingSetupStatus({
     required this.notificationAllowed,
     required this.locationAlwaysAllowed,
     required this.locationServiceEnabled,
     required this.batteryUnrestricted,
+    required this.activityRecognitionAllowed,
   });
 
+  // Activity recognition is a battery-saving bonus (detects when the device
+  // is still vs moving) and is not required for tracking to work, so it is
+  // intentionally left out of isComplete and never blocks duty mount.
   bool get isComplete =>
       notificationAllowed &&
       locationAlwaysAllowed &&
       locationServiceEnabled &&
       batteryUnrestricted;
+}
+
+Future<bool> checkActivityRecognitionGranted() async {
+  try {
+    final permission =
+        await activity_recognition.FlutterActivityRecognition.instance
+            .checkPermission();
+    return permission == activity_recognition.ActivityPermission.GRANTED;
+  } catch (_) {
+    return false;
+  }
 }
 
 Future<TrackingSetupStatus> readTrackingSetupStatus() async {
@@ -39,6 +58,7 @@ Future<TrackingSetupStatus> readTrackingSetupStatus() async {
   final locationServiceEnabled = await Geolocator.isLocationServiceEnabled();
   final batteryUnrestricted =
       await DeviceSettingsService.isIgnoringBatteryOptimizations();
+  final activityRecognitionAllowed = await checkActivityRecognitionGranted();
 
   return TrackingSetupStatus(
     notificationAllowed:
@@ -47,6 +67,7 @@ Future<TrackingSetupStatus> readTrackingSetupStatus() async {
         !Platform.isAndroid || locationPermission == LocationPermission.always,
     locationServiceEnabled: locationServiceEnabled,
     batteryUnrestricted: batteryUnrestricted,
+    activityRecognitionAllowed: activityRecognitionAllowed,
   );
 }
 
@@ -97,9 +118,65 @@ Future<bool> ensureMandatoryTrackingSetupReady(
       mandatory: true,
     );
     if (batteryReady) {
+      if (context.mounted) {
+        // Best-effort only: activity recognition just improves battery
+        // usage, so a denial here must never block duty mount.
+        await ensureActivityRecognitionReady(context);
+      }
       return true;
     }
   }
+
+  return false;
+}
+
+Future<bool> ensureActivityRecognitionReady(
+  BuildContext context, {
+  bool mandatory = false,
+}) async {
+  if (await checkActivityRecognitionGranted()) {
+    return true;
+  }
+
+  if (!mandatory &&
+      await Storage.wasPermissionPromptShownRecently(_activityPromptKey)) {
+    return false;
+  }
+  await Storage.markPermissionPromptShown(_activityPromptKey);
+
+  try {
+    var permission = await activity_recognition
+        .FlutterActivityRecognition.instance.checkPermission();
+    if (permission == activity_recognition.ActivityPermission.DENIED) {
+      permission = await activity_recognition
+          .FlutterActivityRecognition.instance.requestPermission();
+    }
+    if (permission == activity_recognition.ActivityPermission.GRANTED) {
+      await Storage.clearPermissionPrompt(_activityPromptKey);
+      return true;
+    }
+
+    if (permission == activity_recognition.ActivityPermission.PERMANENTLY_DENIED &&
+        context.mounted) {
+      final openSettings = await _showTrackingDialog(
+        context,
+        title: 'Allow Physical Activity',
+        message:
+            'Allowing "Physical activity" lets the app detect when you are standing still to save battery. This is optional and duty tracking still works without it.',
+        primaryLabel: 'Open app permissions',
+        secondaryLabel: 'Skip',
+        mandatory: false,
+      );
+      if (openSettings == true) {
+        final opened = await DeviceSettingsService.openAppDetailsSettings();
+        if (!opened) {
+          await Geolocator.openAppSettings();
+        }
+        await Future.delayed(const Duration(milliseconds: 800));
+        return await checkActivityRecognitionGranted();
+      }
+    }
+  } catch (_) {}
 
   return false;
 }

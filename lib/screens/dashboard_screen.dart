@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +8,7 @@ import '../models/user_profile.dart';
 import '../models/beat_sector_models.dart';
 import '../services/api_service.dart';
 import '../services/network_status_service.dart';
+import '../services/duty_reminder_service.dart';
 import '../services/duty_resume_service.dart';
 import '../services/tracking_service.dart';
 import '../utils/background_tracking_prep.dart';
@@ -163,6 +166,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     try {
       final todayItems = await ApiService.getDutyList(token);
       todayDutyCount = todayItems.length;
+      unawaited(DutyReminderService.scheduleFromDutyList(todayItems));
     } catch (_) {}
 
     var inspectionPendingCount = 0;

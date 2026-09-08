@@ -12,19 +12,21 @@ class LocationSampler {
 
   static LocationSettings trackingSettings({
     Duration? timeLimit,
+    LocationAccuracy accuracy = LocationAccuracy.bestForNavigation,
+    int distanceFilter = 0,
   }) {
     if (defaultTargetPlatform == TargetPlatform.android) {
       return AndroidSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0,
+        accuracy: accuracy,
+        distanceFilter: distanceFilter,
         intervalDuration: trackingInterval,
         timeLimit: timeLimit,
       );
     }
 
     return LocationSettings(
-      accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 0,
+      accuracy: accuracy,
+      distanceFilter: distanceFilter,
       timeLimit: timeLimit,
     );
   }
@@ -33,6 +35,7 @@ class LocationSampler {
     int count = sampleCount,
     Duration perSampleTimeout = const Duration(seconds: 6),
     Duration gap = const Duration(milliseconds: 900),
+    LocationAccuracy accuracy = LocationAccuracy.bestForNavigation,
   }) async {
     Position? best;
     Object? lastError;
@@ -42,6 +45,7 @@ class LocationSampler {
         final sample = await GeolocatorPlatform.instance.getCurrentPosition(
           locationSettings: trackingSettings(
             timeLimit: perSampleTimeout,
+            accuracy: accuracy,
           ),
         );
 

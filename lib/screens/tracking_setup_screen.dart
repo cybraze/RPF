@@ -175,6 +175,12 @@ class _TrackingSetupScreenState extends State<TrackingSetupScreen>
     await _refreshStatus();
   }
 
+  Future<void> _handleActivityRecognition() async {
+    await ensureActivityRecognitionReady(context, mandatory: true);
+    await Future.delayed(const Duration(milliseconds: 500));
+    await _refreshStatus();
+  }
+
   @override
   Widget build(BuildContext context) {
     final status = _status;
@@ -245,6 +251,17 @@ class _TrackingSetupScreenState extends State<TrackingSetupScreen>
                         loading: _loading,
                         actionLabel: 'Allow',
                         onPressed: _handleBattery,
+                      ),
+                      const SizedBox(height: 10),
+                      _SetupRow(
+                        title: 'Physical activity (optional)',
+                        subtitle:
+                            'Detects when you are standing still to save battery. Duty tracking still works without it.',
+                        icon: Icons.directions_walk_rounded,
+                        complete: status?.activityRecognitionAllowed ?? false,
+                        loading: _loading,
+                        actionLabel: 'Allow',
+                        onPressed: _handleActivityRecognition,
                       ),
                       if (_message != null) ...[
                         const SizedBox(height: 14),

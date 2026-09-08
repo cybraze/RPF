@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../utils/storage.dart';
 import '../services/api_service.dart';
+import '../services/duty_reminder_service.dart';
 import 'duty_detail_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,7 +46,9 @@ class _TodayDutyScreenState extends State<TodayDutyScreen> {
   void _load() {
     setState(() {
       _dutiesFuture = Storage.getToken().then((token) async {
-        return ApiService.getDutyList(token!);
+        final duties = await ApiService.getDutyList(token!);
+        unawaited(DutyReminderService.scheduleFromDutyList(duties));
+        return duties;
       });
     });
   }

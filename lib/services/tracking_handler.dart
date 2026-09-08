@@ -4,6 +4,8 @@ import 'dart:math' as math;
 
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_activity_recognition/flutter_activity_recognition.dart'
+    as activity_recognition;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,7 +26,7 @@ void startTrackingCallback() {
 }
 
 class TrackingTaskHandler extends TaskHandler {
-  static const _movementThresholdMeters = 20.0;
+  static const _movementThresholdMeters = 50.0;
   static const _heartbeatEveryTicks = 6;
   static const _dutyValidationEveryTicks = 6;
   static const _maxAcceptedAccuracyMeters = 20.0;
@@ -36,6 +38,15 @@ class TrackingTaskHandler extends TaskHandler {
   static const _streamRestartAfter = Duration(seconds: 35);
   static const _maxBatchSize = 6;
   static const _maxOfflineQueueSize = 120;
+  static const _streamDistanceFilterMeters = 15;
+
+  // Adaptive interval: how many consecutive real ticks (~10s each) of
+  // near-zero movement before we treat the device as stationary.
+  static const _stationaryConfirmTicks = 3;
+  // While stationary, only run a real GPS tick every Nth 10s repeat event
+  // (6 -> effectively every ~60s) instead of every tick.
+  static const _stationaryTickSkip = 6;
+  static const _stationarySpeedMps = 0.5;
 
   final TrackingApiService _trackingApi = const TrackingApiService();
   final Battery _battery = Battery();
@@ -50,11 +61,40 @@ class TrackingTaskHandler extends TaskHandler {
   StreamSubscription<Position>? _positionSubscription;
   Position? _latestStreamPosition;
   DateTime? _latestStreamPositionAt;
+  LocationAccuracy? _streamAccuracyMode;
+
+  StreamSubscription<activity_recognition.Activity>? _activitySubscription;
+  activity_recognition.Activity? _latestActivity;
+  int _stationaryStreak = 0;
+  int _repeatEventCounter = 0;
 
   bool _isTicking = false;
   bool _stopping = false;
   bool? _lastGpsEnabled;
   int _tickCounter = 0;
+
+  bool get _isStationary {
+    final activity = _latestActivity;
+    if (activity != null) {
+      final movingTypes = {
+        activity_recognition.ActivityType.WALKING,
+        activity_recognition.ActivityType.RUNNING,
+        activity_recognition.ActivityType.IN_VEHICLE,
+        activity_recognition.ActivityType.ON_BICYCLE,
+      };
+      if (movingTypes.contains(activity.type)) {
+        return false;
+      }
+      if (activity.type == activity_recognition.ActivityType.STILL &&
+          activity.confidence != activity_recognition.ActivityConfidence.LOW) {
+        return true;
+      }
+    }
+    return _stationaryStreak >= _stationaryConfirmTicks;
+  }
+
+  LocationAccuracy get _currentAccuracy =>
+      _isStationary ? LocationAccuracy.high : LocationAccuracy.bestForNavigation;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -93,6 +133,7 @@ class TrackingTaskHandler extends TaskHandler {
       notificationText: 'Foreground tracking started, checking GPS...',
     );
     await _startPositionStream();
+    await _startActivityRecognition();
 
     try {
       await _trackingApi.startTracking(
@@ -118,14 +159,30 @@ class TrackingTaskHandler extends TaskHandler {
       return;
     }
 
+    _repeatEventCounter++;
+    final requiredSkip = _isStationary ? _stationaryTickSkip : 1;
+    if (_repeatEventCounter < requiredSkip) {
+      return;
+    }
+    _repeatEventCounter = 0;
+
     _isTicking = true;
     _tick().whenComplete(() => _isTicking = false);
   }
 
-  Future<void> _startPositionStream() async {
+  Future<void> _startPositionStream({LocationAccuracy? accuracy}) async {
+    final resolvedAccuracy = accuracy ?? _currentAccuracy;
+    if (_positionSubscription != null &&
+        _streamAccuracyMode == resolvedAccuracy) {
+      return;
+    }
     await _positionSubscription?.cancel();
+    _streamAccuracyMode = resolvedAccuracy;
     _positionSubscription = Geolocator.getPositionStream(
-      locationSettings: LocationSampler.trackingSettings(),
+      locationSettings: LocationSampler.trackingSettings(
+        accuracy: resolvedAccuracy,
+        distanceFilter: _streamDistanceFilterMeters,
+      ),
     ).listen(
       (position) {
         _latestStreamPosition = position;
@@ -135,6 +192,33 @@ class TrackingTaskHandler extends TaskHandler {
         _log('position stream error: $error');
       },
     );
+  }
+
+  Future<void> _startActivityRecognition() async {
+    try {
+      var permission = await activity_recognition
+          .FlutterActivityRecognition.instance.checkPermission();
+      if (permission == activity_recognition.ActivityPermission.DENIED) {
+        permission = await activity_recognition
+            .FlutterActivityRecognition.instance.requestPermission();
+      }
+      if (permission != activity_recognition.ActivityPermission.GRANTED) {
+        _log('activity recognition permission not granted: $permission');
+        return;
+      }
+      await _activitySubscription?.cancel();
+      _activitySubscription = activity_recognition
+          .FlutterActivityRecognition.instance.activityStream.listen(
+        (activity) {
+          _latestActivity = activity;
+        },
+        onError: (error) {
+          _log('activity recognition stream error: $error');
+        },
+      );
+    } catch (error) {
+      _log('activity recognition unavailable: $error');
+    }
   }
 
   Future<void> _tick() async {
@@ -286,6 +370,8 @@ class TrackingTaskHandler extends TaskHandler {
         FlutterForegroundTask.sendDataToMain({'event': 'gps_restored'});
       }
 
+      _updateStationaryStreak(pos);
+
       final point = _gpsPoint(
         pos,
         batteryLevel: batteryLevel,
@@ -299,8 +385,9 @@ class TrackingTaskHandler extends TaskHandler {
 
       FlutterForegroundTask.updateService(
         notificationTitle: 'RPF Duty Active',
-        notificationText:
-            'Checking every 10 sec, queued ${_pendingPoints.length} point(s)',
+        notificationText: _isStationary
+            ? 'Stationary, checking every ~60 sec, queued ${_pendingPoints.length} point(s)'
+            : 'Checking every 10 sec, queued ${_pendingPoints.length} point(s)',
       );
     } catch (_) {
       Position? cachedPosition;
@@ -345,16 +432,12 @@ class TrackingTaskHandler extends TaskHandler {
   }
 
   Future<Position> _getBestAvailablePosition() async {
-    try {
-      return await LocationSampler.getBestEffortPosition(
-        count: 2,
-        perSampleTimeout: const Duration(seconds: 8),
-        gap: const Duration(milliseconds: 700),
-      );
-    } catch (error) {
-      _log('current location sample failed: $error');
-    }
+    final accuracy = _currentAccuracy;
+    await _startPositionStream(accuracy: accuracy);
 
+    // Prefer the already-running position stream over an active one-shot
+    // fetch: the stream keeps the GPS chip warm anyway once tracking is
+    // active, so reusing a fresh fix avoids a second, separate GPS request.
     final streamPosition = _latestStreamPosition;
     final streamPositionAt = _latestStreamPositionAt;
     final streamFresh = streamPosition != null &&
@@ -365,12 +448,23 @@ class TrackingTaskHandler extends TaskHandler {
       return streamPosition;
     }
 
+    try {
+      return await LocationSampler.getBestEffortPosition(
+        count: 2,
+        perSampleTimeout: const Duration(seconds: 8),
+        gap: const Duration(milliseconds: 700),
+        accuracy: accuracy,
+      );
+    } catch (error) {
+      _log('current location sample failed: $error');
+    }
+
     final streamStale = streamPositionAt == null ||
         DateTime.now().toUtc().difference(streamPositionAt) >
             _streamRestartAfter;
 
     if (_positionSubscription == null || streamStale) {
-      await _startPositionStream();
+      await _startPositionStream(accuracy: accuracy);
     }
 
     if (streamPosition != null && _shouldUseFallbackPosition(streamPosition)) {
@@ -383,6 +477,26 @@ class TrackingTaskHandler extends TaskHandler {
     }
 
     throw TimeoutException('Reliable location sample not available');
+  }
+
+  void _updateStationaryStreak(Position pos) {
+    final previous = _lastCollectedPoint;
+    final speed = pos.speed.isFinite ? pos.speed : 0.0;
+    var distanceStationary = true;
+    if (previous != null) {
+      final distance = Geolocator.distanceBetween(
+        previous.latitude,
+        previous.longitude,
+        pos.latitude,
+        pos.longitude,
+      );
+      distanceStationary = distance < _movementThresholdMeters;
+    }
+    if (distanceStationary && speed < _stationarySpeedMps) {
+      _stationaryStreak++;
+    } else {
+      _stationaryStreak = 0;
+    }
   }
 
   TrackingPoint _gpsPoint(
@@ -435,6 +549,7 @@ class TrackingTaskHandler extends TaskHandler {
             'location_type': geofence!.locationType,
           },
         'power_save_mode': powerSaveMode,
+        'stationary_mode': _isStationary,
         ...extraMeta,
       },
     );
@@ -807,9 +922,11 @@ class TrackingTaskHandler extends TaskHandler {
         _pendingPoints.removeRange(0, sendCount);
         await _saveQueue();
         final latest = toSend.last;
+        final modeTag = _isStationary ? '[Stationary ~60s]' : '[Moving ~10s]';
         FlutterForegroundTask.updateService(
           notificationTitle: 'RPF Duty Active',
-          notificationText: 'Sent $sendCount point(s): ${latest.status}',
+          notificationText:
+              '$modeTag Sent $sendCount point(s): ${latest.status}',
         );
         FlutterForegroundTask.sendDataToMain({
           'event': 'tracking_sent',
@@ -920,6 +1037,10 @@ class TrackingTaskHandler extends TaskHandler {
     _positionSubscription = null;
     _latestStreamPosition = null;
     _latestStreamPositionAt = null;
+    await _activitySubscription?.cancel();
+    _activitySubscription = null;
+    _latestActivity = null;
+    _stationaryStreak = 0;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('active_duty_log_id');
     await prefs.remove('active_deployment_id');
@@ -993,6 +1114,7 @@ class TrackingTaskHandler extends TaskHandler {
   @override
   Future<void> onDestroy(DateTime timestamp) async {
     await _positionSubscription?.cancel();
+    await _activitySubscription?.cancel();
     await _saveQueue();
   }
 
