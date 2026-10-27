@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 
 class NetworkStatusService extends ChangeNotifier with WidgetsBindingObserver {
   bool _isOnline = true;
+  int _failedChecks = 0;
   Timer? _pollTimer;
 
   bool get isOnline => _isOnline;
@@ -13,13 +14,17 @@ class NetworkStatusService extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     unawaited(refresh());
     _pollTimer ??= Timer.periodic(
-      const Duration(seconds: 12),
+      const Duration(seconds: 30),
       (_) => unawaited(refresh()),
     );
   }
 
   Future<void> refresh() async {
-    final next = await _checkInternet();
+    final reachable = await _checkInternet();
+    // A single failed lookup on a weak network is not "offline": require
+    // two consecutive failures before flipping the banner.
+    _failedChecks = reachable ? 0 : _failedChecks + 1;
+    final next = reachable || _failedChecks < 2;
     if (next == _isOnline) {
       return;
     }
@@ -29,8 +34,8 @@ class NetworkStatusService extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<bool> _checkInternet() async {
     try {
-      final result = await InternetAddress.lookup('example.com')
-          .timeout(const Duration(seconds: 3));
+      final result = await InternetAddress.lookup('www.rpfwcr.in')
+          .timeout(const Duration(seconds: 8));
       return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
     } catch (_) {
       return false;

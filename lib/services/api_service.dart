@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'resilient_http.dart' as http;
 import '../config/app_config.dart';
 import '../models/app_version_policy.dart';
 import '../models/inspection_task.dart';
@@ -393,7 +393,7 @@ class ApiService {
     request.headers['Accept'] = 'application/json';
     request.files.add(await http.MultipartFile.fromPath('photo', photoPath));
 
-    final streamed = await request.send();
+    final streamed = await request.send().timeout(http.uploadTimeout);
     final body = await streamed.stream.bytesToString();
     final bodyTrim = body.trim();
     if (!bodyTrim.startsWith('{')) {
@@ -731,7 +731,7 @@ class ApiService {
       request.files.add(await http.MultipartFile.fromPath('photo', photoPath));
     }
 
-    final streamed = await request.send();
+    final streamed = await request.send().timeout(http.uploadTimeout);
     final body = await streamed.stream.bytesToString();
     final bodyTrim = body.trim();
 
@@ -1184,7 +1184,7 @@ class ApiService {
         await http.MultipartFile.fromPath('attachment', attachmentPath),
       );
     }
-    final streamed = await request.send();
+    final streamed = await request.send().timeout(http.uploadTimeout);
     final body = await streamed.stream.bytesToString();
     final data = _decodeMultipartBody(streamed.statusCode, body);
     if (streamed.statusCode == 200 || streamed.statusCode == 201) return;

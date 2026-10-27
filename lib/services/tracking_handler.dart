@@ -37,6 +37,8 @@ class TrackingTaskHandler extends TaskHandler {
   static const _streamFreshFor = Duration(seconds: 15);
   static const _streamRestartAfter = Duration(seconds: 35);
   static const _maxBatchSize = 6;
+  static const _preferredBatchSize = 20;
+  static const _maxFlushRounds = 5;
   static const _maxOfflineQueueSize = 120;
   static const _streamDistanceFilterMeters = 15;
 
@@ -45,7 +47,15 @@ class TrackingTaskHandler extends TaskHandler {
   static const _stationaryConfirmTicks = 3;
   // While stationary, only run a real GPS tick every Nth 10s repeat event
   // (6 -> effectively every ~60s) instead of every tick.
-  static const _stationaryTickSkip = 6;
+  static const _stationaryTickSkip = 9;
+  // Moving: sample every Nth 10s repeat event (2 -> ~20s) and upload GPS
+  // points in small batches to keep the radio asleep between sends.
+  static const _movingTickSkip = 2;
+  static const _movingBatchPoints = 3;
+  // Below this battery level, sample even less often.
+  static const _lowBatteryPercent = 20;
+  static const _lowBatteryMovingTickSkip = 3;
+  static const _lowBatteryStationaryTickSkip = 12;
   static const _stationarySpeedMps = 0.5;
 
   final TrackingApiService _trackingApi = const TrackingApiService();
@@ -67,6 +77,22 @@ class TrackingTaskHandler extends TaskHandler {
   activity_recognition.Activity? _latestActivity;
   int _stationaryStreak = 0;
   int _repeatEventCounter = 0;
+  int _batchSize = _preferredBatchSize;
+  int? _lastBatteryLevel;
+
+  bool get _isLowBattery {
+    final level = _lastBatteryLevel;
+    return level != null && level > 0 && level <= _lowBatteryPercent;
+  }
+
+  int get _requiredTickSkip {
+    if (_isStationary) {
+      return _isLowBattery
+          ? _lowBatteryStationaryTickSkip
+          : _stationaryTickSkip;
+    }
+    return _isLowBattery ? _lowBatteryMovingTickSkip : _movingTickSkip;
+  }
 
   bool _isTicking = false;
   bool _stopping = false;
@@ -93,8 +119,9 @@ class TrackingTaskHandler extends TaskHandler {
     return _stationaryStreak >= _stationaryConfirmTicks;
   }
 
-  LocationAccuracy get _currentAccuracy =>
-      _isStationary ? LocationAccuracy.high : LocationAccuracy.bestForNavigation;
+  // bestForNavigation keeps every GPS/sensor source at full power; `high` is
+  // still GPS-grade for duty tracking at a fraction of the battery cost.
+  LocationAccuracy get _currentAccuracy => LocationAccuracy.high;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -160,7 +187,7 @@ class TrackingTaskHandler extends TaskHandler {
     }
 
     _repeatEventCounter++;
-    final requiredSkip = _isStationary ? _stationaryTickSkip : 1;
+    final requiredSkip = _requiredTickSkip;
     if (_repeatEventCounter < requiredSkip) {
       return;
     }
@@ -192,6 +219,15 @@ class TrackingTaskHandler extends TaskHandler {
         _log('position stream error: $error');
       },
     );
+  }
+
+  Future<void> _stopPositionStream() async {
+    if (_positionSubscription == null) return;
+    await _positionSubscription?.cancel();
+    _positionSubscription = null;
+    _streamAccuracyMode = null;
+    _latestStreamPosition = null;
+    _latestStreamPositionAt = null;
   }
 
   Future<void> _startActivityRecognition() async {
@@ -274,6 +310,11 @@ class TrackingTaskHandler extends TaskHandler {
       return;
     }
 
+    // While moving, let a few GPS points accumulate and upload them together.
+    if (!_isStationary && _pendingPoints.length < _movingBatchPoints) {
+      return;
+    }
+
     await _sendBatch(isHeartbeat: false);
     if (_pendingPoints.isEmpty) {
       _tickCounter = 0;
@@ -285,6 +326,7 @@ class TrackingTaskHandler extends TaskHandler {
     bool powerSaveMode = false;
     try {
       batteryLevel = await _battery.batteryLevel;
+      _lastBatteryLevel = batteryLevel;
     } catch (_) {}
     try {
       powerSaveMode = await DeviceSettingsService.isPowerSaveModeEnabled();
@@ -386,8 +428,8 @@ class TrackingTaskHandler extends TaskHandler {
       FlutterForegroundTask.updateService(
         notificationTitle: 'RPF Duty Active',
         notificationText: _isStationary
-            ? 'Stationary, checking every ~60 sec, queued ${_pendingPoints.length} point(s)'
-            : 'Checking every 10 sec, queued ${_pendingPoints.length} point(s)',
+            ? 'Stationary, low-power checks, queued ${_pendingPoints.length} point(s)'
+            : 'Tracking active, queued ${_pendingPoints.length} point(s)',
       );
     } catch (_) {
       Position? cachedPosition;
@@ -433,6 +475,26 @@ class TrackingTaskHandler extends TaskHandler {
 
   Future<Position> _getBestAvailablePosition() async {
     final accuracy = _currentAccuracy;
+    if (_isStationary) {
+      // Standing still: no need to keep the GPS chip streaming between the
+      // slow ticks, a single one-shot fix per tick is enough.
+      await _stopPositionStream();
+      try {
+        return await LocationSampler.getBestEffortPosition(
+          count: 1,
+          perSampleTimeout: const Duration(seconds: 10),
+          accuracy: accuracy,
+        );
+      } catch (error) {
+        _log('stationary location sample failed: $error');
+      }
+      final lastKnownStill = await Geolocator.getLastKnownPosition();
+      if (lastKnownStill != null &&
+          _shouldUseFallbackPosition(lastKnownStill)) {
+        return lastKnownStill;
+      }
+      throw TimeoutException('Reliable location sample not available');
+    }
     await _startPositionStream(accuracy: accuracy);
 
     // Prefer the already-running position stream over an active one-shot
@@ -450,9 +512,8 @@ class TrackingTaskHandler extends TaskHandler {
 
     try {
       return await LocationSampler.getBestEffortPosition(
-        count: 2,
-        perSampleTimeout: const Duration(seconds: 8),
-        gap: const Duration(milliseconds: 700),
+        count: 1,
+        perSampleTimeout: const Duration(seconds: 10),
         accuracy: accuracy,
       );
     } catch (error) {
@@ -898,12 +959,23 @@ class TrackingTaskHandler extends TaskHandler {
     _pendingPoints.add(point);
   }
 
+  /// Uploads queued points in batches, draining a backlog (for example after
+  /// the network returns) without waiting for the next tick for every batch.
   Future<void> _sendBatch({bool isHeartbeat = false}) async {
+    for (var round = 0; round < _maxFlushRounds; round++) {
+      final sent = await _sendBatchOnce(isHeartbeat: isHeartbeat);
+      if (!sent || _pendingPoints.isEmpty || _stopping) {
+        return;
+      }
+    }
+  }
+
+  Future<bool> _sendBatchOnce({bool isHeartbeat = false}) async {
     if (_pendingPoints.isEmpty || _dutyLogId == null || _token == null) {
-      return;
+      return false;
     }
 
-    final sendCount = _pendingPoints.length.clamp(0, _maxBatchSize);
+    final sendCount = _pendingPoints.length.clamp(0, _batchSize);
     final toSend = _pendingPoints
         .take(sendCount)
         .map((point) => point.sanitizedForApi())
@@ -937,15 +1009,17 @@ class TrackingTaskHandler extends TaskHandler {
           'status': latest.status,
           'mode': isHeartbeat ? 'heartbeat' : 'movement',
         });
-        return;
+        return true;
       }
 
       if (statusCode == 401 || statusCode == 409) {
         await _stopForTrackingAuthFailure(
           statusCode == 401 ? 'auth_failed' : 'conflict',
         );
-        return;
+        return false;
       }
+      // Server may cap points per request: fall back to the small batch.
+      _batchSize = _maxBatchSize;
       FlutterForegroundTask.sendDataToMain({
         'event': 'tracking_failed',
         'reason': 'http_$statusCode',
@@ -958,7 +1032,7 @@ class TrackingTaskHandler extends TaskHandler {
       _log('tracking/location failed: $error');
       if (_isNonRetryableTrackingAuthError(error)) {
         await _stopForTrackingAuthFailure('auth_failed');
-        return;
+        return false;
       }
       final reason = error.toString();
       FlutterForegroundTask.sendDataToMain({
@@ -972,6 +1046,7 @@ class TrackingTaskHandler extends TaskHandler {
       );
       await _trimAndPersistQueue();
     }
+    return false;
   }
 
   bool _isNonRetryableTrackingAuthError(Object error) {

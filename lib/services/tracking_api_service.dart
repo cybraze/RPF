@@ -94,7 +94,7 @@ class TrackingApiService {
               headers: _headers(token),
               body: jsonEncode(body),
             )
-            .timeout(const Duration(seconds: 12));
+            .timeout(const Duration(seconds: 25));
 
         if (acceptedStatusCodes.contains(response.statusCode)) {
           return response;
@@ -143,7 +143,7 @@ class TrackingApiService {
         'Content-Type': 'application/json',
       };
 
-  Duration _retryDelay(int attempt) => Duration(milliseconds: 500 * attempt);
+  Duration _retryDelay(int attempt) => Duration(seconds: 2 * attempt);
 
   bool _isAuthGuardLogoutError(String message) {
     return message.contains('RequestGuard::logout') ||
